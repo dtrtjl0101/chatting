@@ -1,0 +1,10 @@
+{
+  "name": "moeyotalk",
+  "private": true,
+  "scripts": {
+    "dev": "./gradlew :app:bootRun",
+    "build": "./gradlew :app:bootJar",
+    "deploy": "bash deploy/deploy.sh",
+    "tunnel": "docker compose --env-file deploy/.env -f deploy/compose.yml --profile tunnel up -d cloudflared"
+  }
+}

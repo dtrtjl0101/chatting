@@ -3,3 +3,7 @@
 
 # Ignore Gradle build output directory
 build
+
+# Deployment state and Cloudflare credentials
+deploy/.env
+deploy/state/
