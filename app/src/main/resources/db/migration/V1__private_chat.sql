@@ -1,0 +1,67 @@
+CREATE TABLE app_users (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    display_name VARCHAR(80) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+);
+
+CREATE TABLE oauth_accounts (
+    provider VARCHAR(40) NOT NULL,
+    provider_subject VARCHAR(255) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    PRIMARY KEY (provider, provider_subject),
+    CONSTRAINT oauth_accounts_user_fk FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE conversations (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    title VARCHAR(100) NOT NULL,
+    direct_key VARCHAR(73) NOT NULL UNIQUE,
+    created_by CHAR(36) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT conversations_creator_fk FOREIGN KEY (created_by) REFERENCES app_users(id)
+);
+
+CREATE TABLE conversation_members (
+    conversation_id CHAR(36) NOT NULL,
+    user_id CHAR(36) NOT NULL,
+    joined_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (conversation_id, user_id),
+    CONSTRAINT conversation_members_conversation_fk FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    CONSTRAINT conversation_members_user_fk FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+CREATE INDEX conversation_members_by_user ON conversation_members(user_id, joined_at DESC);
+
+CREATE TABLE messages (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    conversation_id CHAR(36) NOT NULL,
+    sender_id CHAR(36) NOT NULL,
+    body VARCHAR(4000) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT messages_conversation_fk FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    CONSTRAINT messages_sender_fk FOREIGN KEY (sender_id) REFERENCES app_users(id)
+);
+CREATE INDEX messages_by_conversation ON messages(conversation_id, created_at DESC);
+
+-- Spring Session JDBC keeps OAuth login sessions shared between blue and green.
+CREATE TABLE SPRING_SESSION (
+    PRIMARY_ID CHAR(36) NOT NULL,
+    SESSION_ID CHAR(36) NOT NULL,
+    CREATION_TIME BIGINT NOT NULL,
+    LAST_ACCESS_TIME BIGINT NOT NULL,
+    MAX_INACTIVE_INTERVAL INTEGER NOT NULL,
+    EXPIRY_TIME BIGINT NOT NULL,
+    PRINCIPAL_NAME VARCHAR(100),
+    CONSTRAINT SPRING_SESSION_PK PRIMARY KEY (PRIMARY_ID)
+);
+CREATE UNIQUE INDEX SPRING_SESSION_IX1 ON SPRING_SESSION (SESSION_ID);
+CREATE INDEX SPRING_SESSION_IX2 ON SPRING_SESSION (EXPIRY_TIME);
+CREATE INDEX SPRING_SESSION_IX3 ON SPRING_SESSION (PRINCIPAL_NAME);
+
+CREATE TABLE SPRING_SESSION_ATTRIBUTES (
+    SESSION_PRIMARY_ID CHAR(36) NOT NULL,
+    ATTRIBUTE_NAME VARCHAR(200) NOT NULL,
+    ATTRIBUTE_BYTES LONGBLOB NOT NULL,
+    CONSTRAINT SPRING_SESSION_ATTRIBUTES_PK PRIMARY KEY (SESSION_PRIMARY_ID, ATTRIBUTE_NAME),
+    CONSTRAINT SPRING_SESSION_ATTRIBUTES_FK FOREIGN KEY (SESSION_PRIMARY_ID)
+        REFERENCES SPRING_SESSION(PRIMARY_ID) ON DELETE CASCADE
+);

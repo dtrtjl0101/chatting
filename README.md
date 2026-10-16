@@ -1,127 +1,152 @@
 # 모여톡
 
-Java 21과 Spring Boot 4.1.1로 만든 실시간 채팅 앱입니다. 브라우저 화면은 Spring Boot가 제공하고, `/ws` WebSocket 연결로 메시지와 접속 인원 수를 주고받습니다.
+Java 21과 Spring Boot 4.1.1로 만든 실시간 1:1 채팅 앱입니다. Spring Security OAuth 로그인, MySQL 대화·메시지 저장, WebSocket 실시간 전송을 사용합니다.
 
-## 현재 기능 상태
+## 구현된 기능
 
-현재 버전은 **모든 사용자가 함께 보는 공용 채팅방 하나**입니다. OAuth 로그인, 개인 대화방, 데이터베이스 저장은 아직 구현되지 않았습니다. 지금은 서버 메모리에만 접속자 정보가 있고, 메시지도 데이터베이스에 저장하지 않습니다. 개인 정보나 비밀 대화에 사용하면 안 됩니다.
+- Google 또는 카카오 OAuth 로그인을 통해 사용자를 식별합니다.
+- 로그인한 사용자가 다른 가입 사용자를 검색해 1:1 대화방을 만들 수 있습니다. 두 사용자가 모두 참여자로 등록되므로 상대방은 로그인 후 자기 대화 목록에서 방을 열 수 있습니다.
+- 대화 목록과 이전 메시지는 MySQL에 저장됩니다. 앱 재시작이나 blue/green 교체 후에도 남습니다.
+- REST 기록 조회와 WebSocket 구독·전송에서 매번 대화방 참여자 여부를 검사합니다. 방 ID를 알아도 참여자가 아닌 사용자는 기록을 읽거나 메시지를 보낼 수 없습니다.
+- 메시지를 MySQL에 저장한 다음 Redis Pub/Sub으로 blue/green 앱 양쪽에 전달합니다. Redis의 만료되는 접속 기록으로 대화방 접속자 수를 합산합니다.
+- HTTP 로그인 세션도 MySQL에 저장해 blue/green 슬롯이 바뀌어도 세션을 공유합니다.
 
-## 개인 대화와 데이터베이스를 추가하는 설계
+대화방 참여 규칙은 **A가 B를 지정해 방을 만들면 A와 B가 참여자가 되는 방식**입니다. 다른 사용자는 방 목록에 나오지 않습니다. 사용자 검색은 해당 사용자가 OAuth로 한 번 이상 로그인한 뒤부터 가능합니다. 이는 서버 저장형 개인 대화이며 종단 간 암호화(E2EE)는 아닙니다.
 
-사용자마다 데이터베이스를 따로 만드는 방식보다 **하나의 PostgreSQL 데이터베이스에 모든 사용자의 데이터를 저장하고, 사용자와 대화방 참여 관계로 접근을 제한하는 방식**을 권장합니다. 메신저에서도 대화 목록, 참여자, 메시지를 연결된 테이블로 저장하고 서버가 요청한 사용자의 권한을 확인합니다. Spring Data JPA는 이 관계형 데이터에 접근하는 저장소 계층을 제공하고, PostgreSQL의 외래 키와 유일 제약 조건으로 관계의 무결성도 지킬 수 있습니다 ([Spring Data JPA](https://docs.spring.io/spring-data/jpa/reference/), [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)).
-
-권장 데이터 구조는 다음과 같습니다.
-
-| 테이블 | 저장 내용 |
-| --- | --- |
-| `users` | 앱 사용자 ID, 닉네임, 프로필 정보, 생성 시각 |
-| `oauth_accounts` | 로그인 제공자와 제공자가 발급한 고유 사용자 ID, 연결된 앱 사용자 ID |
-| `conversations` | 대화방 ID, 1:1 또는 그룹 대화 종류, 생성 시각 |
-| `conversation_members` | 대화방 ID와 사용자 ID, 참여 시각, 마지막으로 읽은 메시지 |
-| `messages` | 대화방 ID, 보낸 사용자 ID, 내용, 생성·수정·삭제 시각 |
+## 구조
 
 ```mermaid
-erDiagram
-    USERS ||--o{ OAUTH_ACCOUNTS : links
-    USERS ||--o{ CONVERSATION_MEMBERS : joins
-    CONVERSATIONS ||--|{ CONVERSATION_MEMBERS : contains
-    CONVERSATIONS ||--o{ MESSAGES : stores
-    USERS ||--o{ MESSAGES : sends
+flowchart LR
+    Browser --> Cloudflare --> NPM --> Proxy[Nginx proxy]
+    Proxy --> Blue[Spring Boot blue]
+    Proxy --> Green[Spring Boot green]
+    Blue --> DB[(MySQL)]
+    Green --> DB
+    Blue <--> Redis[(Redis Pub/Sub)]
+    Green <--> Redis
 ```
 
-1:1 대화는 A와 B가 참여자인 `conversations` 행 하나로 표현합니다. 대화 생성 요청이 반복되어 같은 방이 여러 개 생기지 않도록 두 참여자 조합을 정규화해 저장하고, 중복 생성 방지 규칙을 둡니다. 메시지는 `conversation_id`에 연결하고, 방 목록과 이전 대화는 DB에서 페이지 단위로 읽습니다.
+프록시는 외부 요청의 진입점이며 현재 활성 blue 또는 green 컨테이너로 전달합니다. NPM과 Cloudflare가 HTTPS와 도메인을 처리하고, 앱 포트는 인터넷에 직접 공개하지 않습니다. WebSocket 업그레이드 헤더도 Nginx가 전달합니다. Cloudflare Tunnel에서 NPM까지는 `http://npm:80`, NPM에서 이 프로젝트 프록시까지는 `http://proxy:80`입니다. `proxy:80`은 Docker 내부 주소이고 `localhost:8088`은 Mac에서 확인하는 주소라 서로 다른 구간입니다.
 
-### C가 A와 B 대화를 못 보게 하는 핵심
+## OAuth 설정
 
-- OAuth 로그인이 끝나면 서버 세션에서 로그인된 앱 사용자 ID를 얻습니다. 브라우저가 보내는 `senderId`나 닉네임은 권한 판단에 사용하지 않습니다.
-- 메시지 기록 조회, 메시지 전송, WebSocket 대화방 구독 때마다 `conversation_members`에서 현재 사용자의 참여 여부를 검사합니다.
-- 참여자만 메시지를 DB에 저장하고, 해당 대화방을 구독한 참여자에게만 실시간 전달합니다. 방 ID를 추측하거나 알아내도 참여자가 아니면 조회·전송·구독을 거절합니다.
-- 메시지는 DB에 성공적으로 저장한 뒤 다른 참여자에게 전송합니다. OAuth 사용자의 식별자는 이메일만으로 묶지 않고 `(제공자, 제공자 고유 사용자 ID)` 조합으로 연결합니다.
+비밀값은 저장소에 올리지 않고 Git에서 제외된 `deploy/.env`에 둡니다. `.env.example`을 참고해 다음 키를 채웁니다.
 
-Spring Security의 OAuth2 Login을 이용해 Google·Kakao 로그인을 연동할 수 있습니다 ([Spring Security OAuth2 Login](https://docs.spring.io/spring-security/reference/servlet/oauth2/login/)). 각 제공자 개발자 콘솔에서 로컬과 운영 도메인의 로그인 리다이렉트 주소를 등록하고, Client ID와 Secret은 Git에 넣지 않고 환경 변수나 비밀 저장소로 관리합니다. OAuth는 로그인한 사람이 누구인지 확인해주고, 대화방 참여 권한 검사는 별도로 앱에서 구현해야 합니다.
+```dotenv
+MYSQL_PASSWORD=배포_DB_앱_사용자_비밀번호
+MYSQL_ROOT_PASSWORD=배포_MySQL_관리자_비밀번호
+MYSQL_TEST_PASSWORD=테스트_DB_앱_사용자_비밀번호
+MYSQL_TEST_ROOT_PASSWORD=테스트_MySQL_관리자_비밀번호
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+KAKAO_CLIENT_ID=
+KAKAO_CLIENT_SECRET=
+```
 
-### 권장 구현 순서
+Google Cloud Console과 Kakao Developers에 운영 주소의 다음 리다이렉트 URI를 각각 등록합니다.
 
-1. Compose에 PostgreSQL과 영구 볼륨을 추가합니다. 앱 blue/green 두 컨테이너는 같은 DB를 사용합니다. DB 파일은 앱 컨테이너 안에 두지 않고, 정기 백업도 마련합니다.
-2. Spring Boot에 Spring Data JPA와 Flyway를 추가하고 위 테이블을 마이그레이션으로 생성합니다. 운영에서 Hibernate가 임의로 테이블을 바꾸게 두지 않습니다.
-3. Spring Security와 OAuth 로그인을 연결해 사용자 생성·기존 계정 연결 및 로그아웃을 구현합니다.
-4. 대화 목록, 1:1 대화 생성, 대화 기록 조회 API를 만들고 서버에서 참여자 권한을 검사합니다.
-5. WebSocket을 로그인 세션과 연결하고 대화방 구독·메시지 전송마다 같은 권한 검사를 적용합니다. 메시지는 먼저 DB에 저장한 뒤 방 참여자에게 전달합니다.
-6. 읽음 표시, 안 읽은 메시지 수, 차단·신고, 계정 삭제와 데이터 보관 정책을 추가합니다.
+- Google: `https://chatting.ljbhomeserver.date/login/oauth2/code/google`
+- 카카오: `https://chatting.ljbhomeserver.date/login/oauth2/code/kakao`
 
-메시지를 서버 DB에 저장하는 일반적인 개인 대화는 다른 일반 사용자에게 접근을 막을 수 있지만, 서버 운영자는 저장된 평문에 접근할 수 있습니다. 운영자도 내용을 읽을 수 없게 하려면 종단 간 암호화(E2EE)를 별도 설계해야 합니다. 이는 로그인이나 DB 암호화와 다른 기능입니다.
+로컬 OAuth 테스트를 할 때는 각 콘솔에 `http://localhost:8080/login/oauth2/code/google` 또는 `/kakao`도 추가합니다. OAuth Client ID와 Secret을 설정하지 않은 상태에서는 로그인 버튼은 보이지만 제공자 인증이 완료되지 않습니다.
 
-blue/green 배포에서는 두 앱 버전이 같은 DB를 공유합니다. 배포마다 데이터를 지우거나 스키마를 되돌리지 않도록 마이그레이션을 이전·신규 앱 버전이 잠시 함께 동작할 수 있게 순차 적용해야 합니다. 나중에 여러 앱 인스턴스에서 온라인 상태와 메시지 전달을 공유하려면 Redis 같은 공용 중계 계층을 추가할 수 있습니다.
+Google OAuth 클라이언트 유형은 **Web application**이어야 하며, 승인된 리디렉션 URI는 실제 접속 주소와 정확히 일치해야 합니다. 로컬 앱에서는 `http://localhost:8080/login/oauth2/code/google`, 운영에서는 `https://chatting.ljbhomeserver.date/login/oauth2/code/google`을 등록합니다. 로컬에서 `127.0.0.1`로 접속하면 localhost와 다른 URI이므로 그 주소도 별도로 등록해야 합니다. Google의 OAuth 동의 화면이 Testing 상태라면 로그인할 Google 계정을 테스트 사용자로 추가하세요. Client ID/Secret을 `.env`에 수정한 뒤 이미 실행 중인 앱에 반영하려면 앱을 재시작하거나 다시 배포해야 합니다. [Google Web Server OAuth 문서](https://developers.google.com/identity/protocols/oauth2/web-server)는 리디렉션 URI가 등록된 값과 정확히 같아야 한다고 안내합니다.
 
-## 지금 실행 중인 주소
+OAuth가 실패하면 오류 화면의 코드를 먼저 확인하세요. `redirect_uri_mismatch`는 실제 주소와 Google Console의 승인 URI가 다르다는 뜻입니다. `access_denied`는 OAuth 동의 화면이 Testing 상태일 때 로그인 계정이 테스트 사용자에 없을 수 있습니다. `invalid_client`라면 Web application 클라이언트의 ID/Secret 쌍인지, `.env`를 바꾼 뒤 앱을 재시작했는지 확인하세요. 로컬 개발은 `bash deploy/run-local.sh`로 실행해야 8080 포트와 테스트 DB 설정이 함께 적용됩니다.
 
-| 주소 | 용도 | 실행 방법 |
-| --- | --- | --- |
-| `http://localhost:8080` | Spring Boot 개발 서버 기본 주소 | `./gradlew :app:bootRun` |
-| `http://localhost:8081` | Spring Boot 개발 서버를 8081로 실행한 주소 | `SERVER_PORT=8081 ./gradlew :app:bootRun` |
-| `http://localhost:8088` | OrbStack Docker 배포본을 Nginx로 전달 | `bash deploy/deploy.sh` 후 유지 |
+Google 계정은 `(google, 제공자 subject)`, 카카오 계정은 `(kakao, 제공자 ID)`로 연결합니다. 이메일 주소만으로 서로 다른 OAuth 계정을 자동 병합하지 않습니다.
 
-개발 중인 코드를 바로 확인하려면 8081 개발 서버를 다시 실행하면 됩니다. 실행했던 터미널에서 `Ctrl+C`를 누르면 멈춥니다. OrbStack 배포본은 별도 컨테이너로 `localhost:8088`에서 계속 동작합니다.
+## 배포
 
-이전에 실행한 서버가 아직 8081을 점유하고 있는지 확인하려면 macOS 터미널에서 PID를 찾습니다.
+현재 Cloudflare Tunnel과 NPM은 기존에 운영하는 컨테이너를 사용합니다. 앱 DB와 Redis는 이 프로젝트의 Compose 서비스입니다. 배포 전에 Git에서 제외된 `deploy/.env`에 `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`와 OAuth 자격증명을 설정하고 다음을 실행합니다.
 
 ```bash
-lsof -nP -iTCP:8081 -sTCP:LISTEN
+bash deploy/deploy.sh
 ```
 
-출력된 PID가 내가 실행한 예전 Gradle/Java 서버인지 확인한 다음, 그 PID만 종료합니다. 8081을 쓰는 다른 프로그램이라면 종료하지 마세요.
+스크립트는 배포용 MySQL과 Redis가 준비됐는지 확인하고 새 앱 슬롯을 빌드·실행합니다. 새 슬롯의 health check가 통과한 뒤 Nginx 대상을 바꾸고, 이전 슬롯은 30초 뒤 멈춥니다. 두 앱 슬롯은 배포용 MySQL과 Redis를 공유합니다. MySQL 데이터는 운영 볼륨에 저장되고, Redis는 실시간 전달과 접속 상태에 사용되며 앱 데이터의 원본 저장소가 아닙니다.
 
-```bash
-kill 12345
-```
+배포 스크립트는 `deploy/state/active`에 기록된 현재 슬롯의 반대편을 다음 대상으로 선택합니다. 현재 값이 `green`이면 `bash deploy/deploy.sh`가 `blue`를 새 버전으로 빌드·실행하고 health check 통과 후 트래픽을 blue로 바꿉니다. 실행은 반드시 운영 Docker를 제어하는 배포 호스트에서 해야 합니다. 현재 작업 폴더의 상태 파일과 운영 호스트가 다르면 운영 호스트의 `deploy/state/active` 및 `deploy/nginx/active-upstream.conf`를 기준으로 확인하세요.
 
-위 숫자 `12345`를 앞에서 확인한 실제 PID로 바꾸세요.
+배포 앱은 Docker 내부 주소 `db:3306`으로 DB에 접속합니다. Workbench 연결을 위해 Mac의 `127.0.0.1:3308`을 컨테이너 `3306`에 연결했지만, 루프백 주소에만 열려 외부 인터넷에서는 접근할 수 없습니다.
 
-## blue/green 배포란?
+배포 주소는 `http://localhost:8088` 및 `https://chatting.ljbhomeserver.date`입니다. NPM Proxy Host의 대상은 `proxy:80`, Cloudflare Tunnel의 Service URL은 `http://npm:80`입니다. WebSockets Support를 켭니다.
 
-blue와 green은 같은 채팅 앱을 실행하는 컨테이너 두 자리의 이름입니다. 두 버전이 동시에 요청을 처리하는 구조는 아닙니다. 한쪽은 현재 서비스하고, 다른 한쪽은 다음 버전을 준비하는 데 씁니다.
+배포용 MySQL 볼륨은 컨테이너를 재생성해도 유지됩니다. 볼륨을 직접 삭제하면 사용자, 방, 메시지, 세션이 모두 없어지므로 정기 백업을 설정하세요. 예를 들어 운영 전에 DB 백업·복구 절차를 별도로 마련해야 합니다. 메시지는 서버 DB에 평문으로 저장되므로 DB/서버 운영자는 접근할 수 있습니다.
 
-예를 들어 현재 blue가 서비스 중이라면 배포 스크립트가 green에 새 이미지를 실행하고 정상 응답(헬스체크)을 기다립니다. 정상일 때만 Nginx가 새 요청을 green으로 보내도록 설정을 다시 읽습니다. 잠시 뒤 이전 blue 컨테이너를 멈춥니다. 다음 배포는 반대로 진행합니다. 새 버전이 정상 상태가 되지 않으면 기존 서비스 쪽으로 계속 연결합니다. 쉽게 말해 **새 서버를 먼저 준비하고, 확인한 뒤 입구 안내판(Nginx)을 새 서버 쪽으로 바꾸는 방식**입니다.
-
-일반 웹 요청은 끊김을 줄여 교체합니다. 이미 연결된 실시간 WebSocket 채팅은 이전 컨테이너가 종료될 때 재접속할 수 있습니다. 브라우저가 자동으로 다시 연결합니다. 현재 메시지와 접속자 목록은 메모리에 있어 서버 교체나 재시작 때 초기화됩니다.
-
-## Nginx Proxy Manager(NPM)와 Cloudflare 설정
-
-현재 외부 요청은 **Cloudflare Tunnel → NPM → 프로젝트의 Nginx `proxy` → 활성 앱 컨테이너** 순서로 전달되도록 구성했습니다. Cloudflare Tunnel의 Published application route는 공개 호스트명을 내부 서비스에 연결합니다 ([Cloudflare Tunnel 안내](https://developers.cloudflare.com/tunnel/get-started/)).
-
-NPM의 Proxy Host는 다음 값으로 설정합니다.
-
-| 항목 | 값 |
-| --- | --- |
-| Domain Name | `chatting.ljbhomeserver.date` |
-| Scheme | `http` |
-| Forward Hostname / IP | `proxy` |
-| Forward Port | `80` |
-| Access List | Publicly Accessible |
-| Block Common Exploits | 켬 |
-| Websockets Support | 켬 |
-
-기존 입력값인 `chatting:8088` 대신 `proxy:80`을 써야 합니다. `chatting`은 Docker 네트워크에서 앱을 가리키는 이름이 아니며, 호스트의 `8088` 포트도 NPM 컨테이너 내부에서 접근하는 포트가 아닙니다. NPM이 프로젝트 Docker 네트워크에 연결되도록 설정했고, NPM 컨테이너 안에서 `http://proxy:80/`이 HTTP 200을 반환하는 것까지 확인했습니다.
-
-Cloudflare Tunnel 경로의 Service URL은 `http://npm:80`으로 지정합니다. NPM 컨테이너의 Docker 네트워크 이름이 `npm`이어서 Tunnel 컨테이너가 NPM에 요청을 전달할 수 있습니다. 현재 실행 중인 NPM은 프로젝트 네트워크 `deploy_chat`에도 연결했고, Cloudflare Tunnel 컨테이너는 NPM 네트워크 `proxy`에도 연결했습니다. 두 컨테이너를 새로 만들면 이 수동 네트워크 연결이 사라질 수 있으므로 다시 연결해야 합니다.
-
-Cloudflare Zero Trust 대시보드에서 Tunnel이 연결된 상태인지 확인하고, `chatting.ljbhomeserver.date` 공개 호스트명의 Service URL을 `http://npm:80`으로 설정합니다. Tunnel 토큰은 비밀값이므로 채팅이나 저장소에 올리지 마세요. 실수로 추적 대상인 예제 파일에 입력된 토큰은 출력하지 않고 Git에서 제외된 `deploy/.env`로 옮겼으며, `deploy/.env.example`은 빈 템플릿으로 복구했습니다. 이 프로젝트의 별도 `cloudflared` Compose 서비스는 실행하지 않고 기존 `cloudflared` 컨테이너를 사용합니다.
-
-NPM과 Tunnel 컨테이너를 다시 만든 뒤 이름 확인이 안 되면, 각 컨테이너를 프로젝트 네트워크에 연결합니다.
-
-```bash
-docker network connect deploy_chat npm
-docker network connect proxy cloudflared
-```
-
-이후 앱 코드를 수정해 배포할 때는 `bash deploy/deploy.sh`를 실행합니다. 앱은 `http://localhost:8088`에서도 확인할 수 있고, 외부 사용자는 `https://chatting.ljbhomeserver.date`로 접속합니다. 라우터 포트 포워딩은 필요하지 않습니다.
+PostgreSQL에서 MySQL로 바꾸는 설정은 기존 데이터의 자동 복사를 하지 않습니다. 앞서 확인한 로컬 로그에서는 PostgreSQL 연결이 거부됐으므로 당시 앱은 DB 데이터를 읽지 못했습니다. 다른 PostgreSQL 인스턴스에 보존할 데이터가 있다면 MySQL로 전환하기 전에 별도 덤프·변환 절차가 필요합니다.
 
 ## 로컬 개발
 
+아래 스크립트는 배포 DB와 분리된 테스트용 MySQL·Redis를 Compose로 준비한 뒤 Spring Boot를 8080 포트로 실행합니다. 테스트 DB는 `chatting_test` 데이터베이스와 별도 Docker 볼륨을 사용합니다.
+
 ```bash
-SERVER_PORT=8081 ./gradlew :app:bootRun
+bash deploy/run-local.sh
 ```
 
-브라우저에서 `http://localhost:8081`을 엽니다. 포트 번호를 지정하지 않고 `./gradlew :app:bootRun`만 실행하면 기본 주소는 `http://localhost:8080`입니다.
+브라우저에서 `http://localhost:8080`을 엽니다. 개발 서버를 멈출 때는 실행한 터미널에서 `Ctrl+C`를 누릅니다. 테스트 DB의 사용자 이름과 DB 이름은 `chatting_test`이며 비밀번호는 `MYSQL_TEST_PASSWORD`입니다. 테스트 MySQL은 컨테이너 내부 `3306`을 Mac의 `3307`로 연결합니다. 테스트 Redis는 컨테이너 `6379`를 Mac의 `6380`으로 연결합니다. OAuth 자격증명이 `.env`에 설정돼 있으면 스크립트가 로컬 앱에도 전달합니다. 설정하지 않아도 앱은 실행되지만 OAuth 로그인을 완료할 수는 없습니다.
 
-기존의 `./gradlew :app:run --args='5001 8081'`은 예전 Java 앱에서 사용하던 명령이라 지금은 맞지 않습니다. Spring Boot로 바꾸면서 Gradle 실행 작업이 `bootRun`으로 바뀌었고, 웹 페이지와 WebSocket이 같은 포트를 사용하므로 `5001`을 따로 지정할 필요도 없습니다. 개발 서버는 실행한 터미널에서 `Ctrl+C`로 멈춥니다.
+MySQL Workbench에서 테스트 DB 연결을 추가할 때는 아래 값을 사용합니다. **Connection Name은 Workbench에서 구분하기 위한 임의의 이름**이므로 `Chatting Test`처럼 정하면 됩니다.
+
+| Workbench 항목 | 테스트 DB 값 |
+| --- | --- |
+| Connection Name | `Chatting Test` |
+| Hostname | `127.0.0.1` |
+| Port | `3307` |
+| Username | `chatting_test` |
+| Password | `MYSQL_TEST_PASSWORD` 값 |
+| Default Schema | `chatting_test` |
+
+여기에는 서로 다른 두 계정 비밀번호가 있습니다. `MYSQL_TEST_PASSWORD`는 앱 계정 `chatting_test`의 비밀번호이며 로컬 앱과 Workbench에서 일상적인 조회에 사용합니다. `MYSQL_TEST_ROOT_PASSWORD`는 MySQL 관리자 `root`의 비밀번호로, 사용자·권한 관리 같은 관리자 작업에만 씁니다. Workbench의 테스트 연결에는 `MYSQL_TEST_PASSWORD`를 입력하고 root 비밀번호는 입력하지 않습니다. 운영도 같은 방식으로 `MYSQL_PASSWORD`(앱 계정 `chatting`)와 `MYSQL_ROOT_PASSWORD`(운영 MySQL 관리자)를 구분합니다.
+
+운영용 두 번째 Workbench 연결은 **MySQL 배포 컨테이너가 실행 중인 Mac에서** 다음처럼 추가합니다. Workbench의 홈 화면에서 `+` 버튼을 누르고 아래 항목을 넣은 뒤 **Test Connection**을 선택하고 저장합니다.
+
+| Workbench 항목 | 운영 DB 값 |
+| --- | --- |
+| Connection Name | `Chatting Production` (구분용 이름) |
+| Hostname | `127.0.0.1` |
+| Port | `3308` |
+| Username | `chatting` |
+| Password | `MYSQL_PASSWORD` 값 |
+| Default Schema | `chatting` |
+
+이 Workbench용 Hostname은 Mac에서 접속하므로 `127.0.0.1`입니다. 앱 컨테이너는 Docker 내부 DNS 이름인 `db`와 포트 `3306`을 사용합니다. 운영 DB의 Workbench 연결은 DB 컨테이너가 실행 중일 때만 성공합니다. 외부 다른 컴퓨터에서는 이 로컬 전용 포트로 바로 접속할 수 없으므로 SSH 터널을 사용해야 합니다.
+
+테스트 MySQL의 사용자·대화방·메시지를 확인하려면 다음 명령을 실행합니다. `-p` 옵션이 비밀번호를 물어보면 `deploy/.env`의 `MYSQL_TEST_PASSWORD`를 입력합니다.
+
+```bash
+docker compose --project-name chatting-test --env-file deploy/.env -f deploy/compose.test.yml exec db mysql -u chatting_test -p chatting_test
+```
+
+MySQL 프롬프트에서 `SHOW TABLES;`로 테이블을 보고, `SELECT * FROM app_users;`, `SELECT * FROM conversations;`, `SELECT * FROM conversation_members;`, `SELECT * FROM messages ORDER BY created_at;`로 데이터를 조회합니다. 끝낼 때는 `exit`를 입력합니다. 세션 데이터는 `SPRING_SESSION` 및 `SPRING_SESSION_ATTRIBUTES` 테이블에 있습니다.
+
+로컬 테스트 DB와 배포 DB는 데이터베이스, 사용자, 비밀번호, Docker 볼륨을 각각 따로 사용합니다. 테스트 앱은 Mac의 `127.0.0.1:3307`에, 배포 앱은 Docker 내부 주소 `db:3306`에 접속합니다. `127.0.0.1:3308`은 Workbench 편의를 위한 Mac 내부 연결입니다. 각 `*_PASSWORD` 값은 해당 환경의 앱 계정용이고 `*_ROOT_PASSWORD`는 그 DB의 관리자 계정용입니다. `.env` 값만 바꾸면 기존 볼륨 안의 계정 비밀번호는 바뀌지 않으므로, DB를 초기화한 뒤에는 임의로 변경하지 마세요.
+
+배포 DB를 확인하려면 다음 명령을 사용하고 `MYSQL_PASSWORD`를 입력합니다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/compose.yml exec db mysql -u chatting -p chatting
+```
+
+Docker 배포본은 개발 서버와 별개로 `localhost:8088`에서 실행할 수 있습니다. 같은 8080 포트를 로컬과 컨테이너가 각각 써도 서로 다른 네트워크 공간이므로 충돌하지 않습니다.
+
+## 파일 위치
+
+- `app/src/main/java/chatting/controller/ChatApiController.java`: REST API 요청과 응답
+- `app/src/main/java/chatting/service/ChatService.java`: 대화방·메시지 규칙과 참여 권한 검사
+- `app/src/main/java/chatting/service/UserService.java`: OAuth 사용자 등록과 계정 연결
+- `app/src/main/java/chatting/repository/UserRepository.java`, `ConversationRepository.java`, `MessageRepository.java`: `JdbcTemplate`으로 MySQL SQL 조회·저장
+- `app/src/main/java/chatting/ChatWebSocketHandler.java`: WebSocket 통신과 Redis 실시간 전달; 메시지 규칙은 Service에 위임
+- `app/src/main/java/chatting/SecurityConfig.java`: OAuth 로그인, CSRF와 보안 설정
+
+Controller는 HTTP 요청을 받고 Service를 호출합니다. Service가 대화방 권한, 메시지 검증과 계정 생성 같은 앱 규칙을 처리하며, Repository가 SQL을 실행합니다. 여기서는 JPA 대신 `JdbcTemplate`을 사용하지만 역할은 Repository 계층입니다. WebSocket은 REST Controller를 통하지 않는 연결 방식이라 `ChatWebSocketHandler`가 요청을 직접 받되, 저장과 참여자 검사는 `ChatService`에 위임합니다.
+- `app/src/main/resources/db/migration/`: Flyway MySQL 마이그레이션
+- `deploy/compose.yml`: 배포용 blue/green 앱과 MySQL, Redis, 프로젝트 Nginx
+- `deploy/compose.test.yml`: 로컬 테스트 전용 MySQL·Redis와 별도 볼륨
+- `deploy/deploy.sh`: health check 후 Nginx 트래픽 전환
+- `deploy/run-local.sh`: 로컬 MySQL·Redis 실행 후 Spring Boot 실행
+- `deploy/.env`: DB/OAuth/Tunnel 비밀값 (Git 제외)
+
+기존 테스트 DB에서 OAuth 로그인 후 `Table 'chatting_test.SPRING_SESSION' doesn't exist` 오류가 나면 세션 테이블이 없는 상태입니다. 새 `V2__ensure_spring_session_tables.sql` 마이그레이션이 기존 DB에도 테이블을 추가하므로 앱을 다시 실행하면 됩니다. 이 변경은 기존 사용자/대화/메시지 데이터를 삭제하지 않습니다.
+
+Flyway 마이그레이션은 Spring Boot의 `spring-boot-starter-flyway`로 앱 시작 시 실행됩니다. 앱 시작 로그에서 Flyway가 V1/V2를 적용했는지 확인할 수 있습니다.

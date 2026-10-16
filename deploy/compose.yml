@@ -1,4 +1,33 @@
 services:
+  db:
+    image: mysql:8.4
+    ports: ["127.0.0.1:3308:3306"]
+    environment:
+      MYSQL_DATABASE: chatting
+      MYSQL_USER: chatting
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in deploy/.env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [chat]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [chat]
+
   app-blue:
     image: chatting-app:local
     build:
@@ -6,9 +35,20 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/chatting?serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: chatting
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      REDIS_HOST: redis
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
     expose: ["8080"]
     restart: unless-stopped
     networks: [chat]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
 
   app-green:
     image: chatting-app:local
@@ -17,9 +57,20 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/chatting?serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: chatting
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      REDIS_HOST: redis
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
     expose: ["8080"]
     restart: unless-stopped
     networks: [chat]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
 
   proxy:
     image: nginx:stable-alpine
@@ -43,3 +94,6 @@ services:
 
 networks:
   chat:
+
+volumes:
+  mysql_data:

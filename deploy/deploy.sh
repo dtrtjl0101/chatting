@@ -3,7 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-COMPOSE=(docker compose -f deploy/compose.yml)
+if [[ ! -f deploy/.env ]]; then
+  echo "deploy/.env is missing. Copy deploy/.env.example to deploy/.env and set MySQL passwords and OAuth credentials." >&2
+  exit 1
+fi
+COMPOSE=(docker compose --env-file deploy/.env -f deploy/compose.yml)
 mkdir -p deploy/state
 ACTIVE_FILE=deploy/state/active
 ACTIVE=""
@@ -11,6 +15,20 @@ if [[ -f "$ACTIVE_FILE" ]]; then ACTIVE="$(cat "$ACTIVE_FILE")"; fi
 
 if [[ "$ACTIVE" == "blue" ]]; then TARGET=green; else TARGET=blue; fi
 echo "Building Spring Boot image; deploying to $TARGET slot"
+"${COMPOSE[@]}" up -d db redis
+for dependency in db redis; do
+  dependency_healthy=false
+  for attempt in $(seq 1 60); do
+    dependency_id="$("${COMPOSE[@]}" ps -q "$dependency")"
+    dependency_state="$(docker inspect --format='{{.State.Health.Status}}' "$dependency_id" 2>/dev/null || true)"
+    if [[ "$dependency_state" == healthy ]]; then dependency_healthy=true; break; fi
+    sleep 2
+  done
+  if [[ "$dependency_healthy" != true ]]; then
+    echo "$dependency did not become healthy; no app traffic was changed." >&2
+    exit 1
+  fi
+done
 "${COMPOSE[@]}" build app-blue
 "${COMPOSE[@]}" up -d --no-deps --no-build "app-$TARGET"
 
