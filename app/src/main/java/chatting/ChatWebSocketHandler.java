@@ -21,15 +21,15 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @Component
-public class ChatWebSocketHandler extends TextWebSocketHandler implements MessageListener {
+public class ChatWebSocketHandler extends TextWebSocketHandler implements MessageListener {//웹소켓 연결을 처리하는 핸들러로, TextWebSocketHandler를 상속받아 텍스트 메시지를 처리하고, MessageListener를 구현하여 Redis 메시지를 수신
     private final JsonMapper json;
     private final ChatService chats;
     private final StringRedisTemplate redis;
-    private final ConcurrentHashMap<UUID, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, UUID> joinedRooms = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();//대화방별 접속자 연결
+    private final ConcurrentHashMap<String, UUID> joinedRooms = new ConcurrentHashMap<>();//세션별 접속한 대화방
+    private final ConcurrentHashMap<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();//세션 ID별 연결된 WebSocketSession
 
-    public ChatWebSocketHandler(JsonMapper json, ChatService chats, StringRedisTemplate redis) {
+    public ChatWebSocketHandler(JsonMapper json, ChatService chats, StringRedisTemplate redis) {//생성자주입
         this.json = json; this.chats = chats; this.redis = redis;
     }
 
@@ -38,7 +38,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
         Object userId = raw.getAttributes().get("appUserId");
         if (userId == null) { raw.close(CloseStatus.NOT_ACCEPTABLE.withReason("로그인이 필요합니다.")); return; }
         raw.getAttributes().put("userId", UUID.fromString(userId.toString()));
-        activeSessions.put(raw.getId(), new ConcurrentWebSocketSessionDecorator(raw, 10_000, 64 * 1024));
+        activeSessions.put(raw.getId(), new ConcurrentWebSocketSessionDecorator(raw, 10_000, 64 * 1024));//WebSocket 세션에 동시에 메시지를 보내는 상황 등을 처리하기 위한 래퍼
     }
 
     @Override
@@ -56,11 +56,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
             catch (ResponseStatusException ex) { session.sendMessage(new TextMessage(error("이 대화방의 참여자가 아닙니다."))); session.close(CloseStatus.POLICY_VIOLATION); return; }
             UUID previous = joinedRooms.put(session.getId(), roomId);
             if (previous != null) {
-                leave(previous, session);
-                removePresence(previous, userId.toString(), session.getId());
-                broadcastCount(previous);
+                leave(previous, session);//이전 대화방에서 나간 것으로 처리
+                removePresence(previous, userId.toString(), session.getId());//이전 대화방에서 나간 것으로 처리
+                broadcastCount(previous);//기존 대화방의 참여자 수를 갱신
             }
-            rooms.computeIfAbsent(roomId, ignored -> ConcurrentHashMap.newKeySet()).add(session);
+            rooms.computeIfAbsent(roomId, ignored -> ConcurrentHashMap.newKeySet()).add(session);//rooms에 해당 방이 있으면 기존 세션 집합을 가져와.해당 방이 없다면 새로운 동시성 세트를 만들어 넣어.마지막으로 현재 세션을 그 집합에 추가해.
             addPresence(roomId, userId.toString(), session.getId());
             send(session, json.createObjectNode().put("type", "joined").put("conversationId", roomId.toString()));
             broadcastCount(roomId);

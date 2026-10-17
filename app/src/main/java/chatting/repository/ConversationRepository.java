@@ -16,13 +16,14 @@ public class ConversationRepository {
     public List<Map<String, Object>> findAllForUser(UUID userId) {
         String user = userId.toString();
         return jdbc.queryForList("""
-            SELECT c.id, c.title, c.created_at AS createdAt,
-                   (SELECT u.display_name FROM conversation_members cm2 JOIN app_users u ON u.id=cm2.user_id
-                    WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) AS otherName,
+            SELECT c.id, other.display_name AS title, c.created_at AS createdAt,
+                   other.display_name AS otherName,
                    (SELECT m.body FROM messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1) AS lastMessage
             FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
+            JOIN conversation_members other_cm ON other_cm.conversation_id=c.id AND other_cm.user_id<>cm.user_id
+            JOIN app_users other ON other.id=other_cm.user_id
             WHERE cm.user_id=? ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id=c.id), c.created_at) DESC
-            """, user, user);
+            """, user);
     }
 
     public boolean existsByDirectKey(String directKey) {

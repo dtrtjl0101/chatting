@@ -34,7 +34,7 @@ public class ChatApiController {
     @GetMapping("/csrf")
     public Map<String, String> csrf(CsrfToken token) { return Map.of("token", token.getToken()); }
 
-    @GetMapping("/me")
+    @GetMapping("/me")//로그인후 정보를 가져옴
     public Map<String, Object> me(@SessionAttribute(name = "appUserId", required = false) String id) {
         if (id == null) return Map.of("authenticated", false);
         Map<String, Object> profile = users.findProfile(UUID.fromString(id))
@@ -74,5 +74,5 @@ public class ChatApiController {
         return chats.getMessages(conversationId, UUID.fromString(id), cursor);
     }
 
-    public record CreateConversationRequest(String otherUserId, String title) {}
+    public record CreateConversationRequest(String otherUserId, String title) {}//일반 클래스로 필드, 생성자, getter를 직접 작성하는 대신 만들어줌
 }

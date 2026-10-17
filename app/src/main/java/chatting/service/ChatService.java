@@ -71,7 +71,7 @@ public class ChatService {
         return messages.insertAndFind(UUID.randomUUID(), conversationId, senderId, body);
     }
 
-    public void requireMember(UUID conversationId, UUID userId) {
+    public void requireMember(UUID conversationId, UUID userId) {//요청한 사용자가 해당 대화방 참여자인지 확인하는 권한 검사 메서드
         if (!conversations.isMember(conversationId, userId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "대화방 참여자만 접근할 수 있습니다.");
         }

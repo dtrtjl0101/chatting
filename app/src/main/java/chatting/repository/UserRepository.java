@@ -29,8 +29,8 @@ public class UserRepository {
     }
 
     public List<Map<String, Object>> searchByDisplayName(UUID requester, String query) {
-        return jdbc.queryForList("SELECT id, display_name AS displayName FROM app_users WHERE id<>? AND display_name LIKE ? ORDER BY display_name LIMIT 20",
-                requester.toString(), "%" + query + "%");
+        return jdbc.queryForList("SELECT id, display_name AS displayName FROM app_users WHERE id<>? AND (display_name LIKE ? OR id LIKE ?) ORDER BY display_name LIMIT 20",
+                requester.toString(), "%" + query + "%", query + "%");
     }
 
     public void insertUser(UUID id, String displayName) {
