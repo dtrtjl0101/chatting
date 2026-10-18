@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -110,6 +111,17 @@ public class ChatApiController {
         var created = chats.createConversation(UUID.fromString(id), request.memberIds(), request.otherUserId(), request.title());
         events.publishRoomCreated(UUID.fromString(id), created.memberIds(), created.summary());
         return created.summary();
+    }
+
+    /** 현재 사용자를 대화방에서 제외하고 모든 앱 슬롯의 해당 사용자 연결을 정리한다. */
+    @DeleteMapping("/conversations/{conversationId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void leaveConversation(@SessionAttribute("appUserId") String id,
+                                  @PathVariable UUID conversationId) {
+        UUID userId = UUID.fromString(id);
+        ChatService.LeaveResult result = chats.leaveConversation(conversationId, userId);
+        events.publishMemberLeft(conversationId, userId);
+        if (result.closedNow()) events.publishConversationClosed(conversationId, result.remainingMemberIds());
     }
 
     /** 대화방 참여 권한을 확인한 뒤 메시지 기록을 반환한다. */

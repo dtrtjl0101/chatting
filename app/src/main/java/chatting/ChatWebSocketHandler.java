@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import chatting.service.ChatService;
@@ -74,7 +75,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
         if (roomId == null) { session.sendMessage(new TextMessage(error("먼저 대화방에 들어가세요."))); return; }
         try { chats.requireMember(roomId, userId); }
         catch (ResponseStatusException ex) { session.sendMessage(new TextMessage(error("이 대화방의 참여자가 아닙니다."))); session.close(CloseStatus.POLICY_VIOLATION); return; }
-        var saved = chats.saveMessage(roomId, userId, input.path("text").asText(""));
+        Map<String, Object> saved;
+        try { saved = chats.saveMessage(roomId, userId, input.path("text").asText("")); }
+        catch (ResponseStatusException ex) {
+            session.sendMessage(new TextMessage(error(ex.getReason() == null ? "메시지를 보낼 수 없습니다." : ex.getReason())));
+            return;
+        }
         if (saved == null) return;
         var output = json.valueToTree(saved);
         var envelope = json.createObjectNode().put("type", "message").put("conversationId", roomId.toString());
@@ -87,6 +93,35 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
     public void onMessage(Message message, byte[] pattern) {
         try {
             var event = json.readTree(new String(message.getBody(), StandardCharsets.UTF_8));
+            if (event.path("type").asText().equals("memberLeft")) {
+                UUID roomId = UUID.fromString(event.path("conversationId").asText());
+                String userId = event.path("userId").asText();
+                for (var joined : joinedRooms.entrySet()) {
+                    if (!joined.getValue().equals(roomId)) continue;
+                    WebSocketSession session = activeSessions.get(joined.getKey());
+                    if (session == null || !userId.equals(String.valueOf(session.getAttributes().get("userId")))) continue;
+                    if (!joinedRooms.remove(joined.getKey(), roomId)) continue;
+                    removePresence(roomId, userId, joined.getKey());
+                    leave(roomId, session);
+                    send(session, json.createObjectNode().put("type", "roomLeft").put("conversationId", roomId.toString()));
+                }
+                broadcastCount(roomId);
+                return;
+            }
+            if (event.path("type").asText().equals("conversationClosed")) {
+                UUID roomId = UUID.fromString(event.path("conversationId").asText());
+                List<String> recipients = new java.util.ArrayList<>();
+                event.path("recipientUserIds").forEach(value -> recipients.add(value.asText()));
+                ((tools.jackson.databind.node.ObjectNode) event).remove("recipientUserIds");
+                String payload = json.writeValueAsString(event);
+                Set<WebSocketSession> targets = new LinkedHashSet<>(rooms.getOrDefault(roomId, Set.of()));
+                activeSessions.values().stream()
+                        .filter(session -> recipients.contains(String.valueOf(session.getAttributes().get("userId"))))
+                        .forEach(targets::add);
+                targets.forEach(session -> send(session, payload));
+                removeRoomSubscriptions(roomId);
+                return;
+            }
             if (event.path("type").asText().equals("roomCreated")) {
                 List<String> recipients = new java.util.ArrayList<>();
                 event.path("recipientUserIds").forEach(value -> recipients.add(value.asText()));
@@ -116,6 +151,35 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
         var event = json.createObjectNode().put("type", "message").put("conversationId", conversationId.toString());
         event.setAll((tools.jackson.databind.node.ObjectNode) json.valueToTree(savedMessage));
         redis.convertAndSend("chat:events", json.writeValueAsString(event));
+    }
+
+    /** 참여자가 방을 나갔음을 Redis로 발행해 blue/green 양쪽 연결과 접속자 수를 정리한다. */
+    public void publishMemberLeft(UUID conversationId, UUID userId) {
+        var event = json.createObjectNode().put("type", "memberLeft")
+                .put("conversationId", conversationId.toString()).put("userId", userId.toString());
+        redis.convertAndSend("chat:events", json.writeValueAsString(event));
+    }
+
+    /** 종료된 1:1 대화방의 남은 참여자들에게 채팅 종료 알림을 전달한다. */
+    public void publishConversationClosed(UUID conversationId, List<UUID> recipientIds) {
+        var event = json.createObjectNode().put("type", "conversationClosed")
+                .put("conversationId", conversationId.toString())
+                .put("notice", "상대방이 방을 나갔습니다. 더 이상 대화할 수 없는 상태입니다.");
+        event.set("recipientUserIds", json.valueToTree(recipientIds.stream().map(UUID::toString).toList()));
+        redis.convertAndSend("chat:events", json.writeValueAsString(event));
+    }
+
+    /** 종료된 방의 각 앱 슬롯 WebSocket 구독과 접속자 수 기록을 모두 제거한다. */
+    private void removeRoomSubscriptions(UUID roomId) {
+        for (var joined : joinedRooms.entrySet()) {
+            if (!joined.getValue().equals(roomId) || !joinedRooms.remove(joined.getKey(), roomId)) continue;
+            WebSocketSession session = activeSessions.get(joined.getKey());
+            if (session == null) continue;
+            Object userId = session.getAttributes().get("userId");
+            if (userId != null) removePresence(roomId, userId.toString(), joined.getKey());
+            leave(roomId, session);
+        }
+        broadcastCount(roomId);
     }
 
     /** WebSocket 연결이 끝나면 세션과 접속자 수 기록을 정리한다. */

@@ -96,6 +96,7 @@ public class ChatService {
     @Transactional
     public Map<String, Object> saveMessage(UUID conversationId, UUID senderId, String rawBody) {
         requireMember(conversationId, senderId);
+        requireConversationOpen(conversationId);
         String body = rawBody == null ? "" : rawBody.strip();
         if (body.isBlank()) return null;
         if (body.length() > 4000) body = body.substring(0, 4000);
@@ -106,6 +107,7 @@ public class ChatService {
     @Transactional
     public Map<String, Object> saveAttachment(UUID conversationId, UUID senderId, MultipartFile upload) {
         requireMember(conversationId, senderId);
+        requireConversationOpen(conversationId);
         FileStorageService.StoredFile file = files.storeAttachment(upload);
         String kind = file.contentType().startsWith("image/") ? "IMAGE" : "AUDIO";
         return messages.insertAttachmentAndFind(UUID.randomUUID(), conversationId, senderId, kind,
@@ -132,8 +134,29 @@ public class ChatService {
         }
     }
 
+    /** 현재 사용자를 대화방 참여자에서 제거한다. 메시지 기록은 다른 참여자를 위해 보존한다. */
+    @Transactional
+    public LeaveResult leaveConversation(UUID conversationId, UUID userId) {
+        requireMember(conversationId, userId);
+        String kind = conversations.findKind(conversationId);
+        boolean alreadyClosed = conversations.isClosedForUpdate(conversationId);
+        boolean closedNow = "DIRECT".equals(kind) && !alreadyClosed;
+        if (closedNow) conversations.closeDirectConversation(conversationId);
+        conversations.removeMember(conversationId, userId);
+        return new LeaveResult(closedNow, conversations.findMemberIds(conversationId));
+    }
+
+    /** 종료된 1:1 방에 신규 메시지가 저장되지 않도록 방 행을 잠그고 상태를 확인한다. */
+    private void requireConversationOpen(UUID conversationId) {
+        if (conversations.isClosedForUpdate(conversationId)) {
+            throw new ResponseStatusException(HttpStatus.GONE, "상대방이 방을 나갔습니다. 더 이상 대화할 수 없는 상태입니다.");
+        }
+    }
+
     /** 생성된 대화방 요약과 생성 알림을 받을 참여자 ID 목록을 함께 반환한다. */
     public record CreatedConversation(Map<String, Object> summary, List<UUID> memberIds) {}
+    /** 나가기 처리 결과: 이번 요청에서 1:1 방이 종료됐는지와 남은 참여자 목록이다. */
+    public record LeaveResult(boolean closedNow, List<UUID> remainingMemberIds) {}
     /** 참여자 확인 후 파일 다운로드에 필요한 파일 리소스와 응답 메타데이터를 전달한다. */
     public record AttachmentResource(Resource resource, String name, String contentType) {}
 }
