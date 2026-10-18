@@ -35,7 +35,7 @@ public class ChatService {
     public List<Map<String, Object>> searchUsers(UUID requester, String query) {
         String normalized = query == null ? "" : query.strip();
         if (normalized.isBlank()) return List.of();
-        return users.searchByDisplayName(requester, normalized);
+        return users.searchByNameOrExactCode(requester, normalized);
     }
 
     /** 사용자가 참여 중인 대화방 요약 목록을 반환한다. */

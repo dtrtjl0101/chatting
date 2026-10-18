@@ -98,7 +98,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
                 return;
             }
             UUID room = UUID.fromString(event.path("conversationId").asText());
-            ((tools.jackson.databind.node.ObjectNode) event).remove("conversationId");
+            // 브라우저가 현재 방의 메시지·접속자 수 이벤트인지 구분할 수 있도록 conversationId를 유지한다.
             broadcast(room, event);
         } catch (Exception ignored) { }
     }

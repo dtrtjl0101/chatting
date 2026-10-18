@@ -35,14 +35,23 @@ public class UserRepository {
         return count != null && count > 0;
     }
 
-    public List<Map<String, Object>> searchByDisplayName(UUID requester, String query) {
+    /** 전체 코드가 일치하면 그 사용자를 우선 반환하고, 없으면 코드 앞부분과 닉네임으로 후보를 검색한다. */
+    public List<Map<String, Object>> searchByNameOrExactCode(UUID requester, String query) {
         return jdbc.queryForList("""
                 SELECT id, display_name AS displayName, user_code AS userCode,
                        CASE WHEN profile_image_path IS NULL THEN '' ELSE CONCAT('/api/users/', id, '/avatar') END AS avatarUrl
                 FROM app_users
-                WHERE id<>? AND (display_name LIKE ? OR user_code LIKE ?)
-                ORDER BY display_name LIMIT 30
-                """, requester.toString(), "%" + query + "%", query + "%");
+                WHERE id<>? AND (
+                    user_code=? OR (
+                        NOT EXISTS (
+                            SELECT 1 FROM app_users exact_code
+                            WHERE exact_code.id<>? AND exact_code.user_code=?
+                        ) AND (user_code LIKE CONCAT(?, '%') OR display_name LIKE ?)
+                    )
+                )
+                ORDER BY CASE WHEN user_code=? THEN 0 WHEN user_code LIKE CONCAT(?, '%') THEN 1 ELSE 2 END,
+                         display_name LIMIT 30
+                """, requester.toString(), query, requester.toString(), query, query, "%" + query + "%", query, query);
     }
 
     public void insertUser(UUID id, String displayName, String userCode) {

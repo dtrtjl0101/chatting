@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.SessionAttribute;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
-@RestController
+@RestController//api요청처리
 @RequestMapping("/api")
 public class ChatApiController {
     private final ChatService chats;
