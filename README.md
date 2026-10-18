@@ -1,13 +1,16 @@
 # 모여톡
 
-Java 21과 Spring Boot 4.1.1로 만든 실시간 1:1 채팅 앱입니다. Spring Security OAuth 로그인, MySQL 대화·메시지 저장, WebSocket 실시간 전송을 사용합니다.
+Java 21과 Spring Boot 4.1.1로 만든 실시간 채팅 앱입니다. Spring Security OAuth 로그인, MySQL 대화·메시지 저장, WebSocket 실시간 전송을 사용합니다.
 
 ## 구현된 기능
 
 - Google 또는 카카오 OAuth 로그인을 통해 사용자를 식별합니다.
 - Google 로그인을 시작할 때 계정 선택 화면을 요청하므로, 로그아웃 뒤 다른 Google 계정으로 다시 로그인할 수 있습니다. 앱 로그아웃은 Google 자체의 브라우저 세션을 로그아웃하지 않습니다.
 - 대화 목록에는 각 로그인 사용자에게 상대방의 닉네임을 대화방 이름으로 보여줍니다.
-- 로그인한 사용자가 다른 가입 사용자를 검색해 1:1 대화방을 만들 수 있습니다. 두 사용자가 모두 참여자로 등록되므로 상대방은 로그인 후 자기 대화 목록에서 방을 열 수 있습니다.
+- 로그인한 사용자가 다른 가입 사용자를 검색해 1:1 또는 그룹 대화방을 만들 수 있습니다. 한 명을 선택하면 1:1, 두 명 이상을 선택하면 최대 50명 그룹방이 됩니다. 그룹 이름은 생성할 때 지정할 수 있습니다.
+- 방 생성 이벤트를 Redis Pub/Sub으로 모든 앱 슬롯에 보내 참여자 화면의 대화 목록을 갱신합니다. 상대방이 로그인해 WebSocket에 연결된 상태라면 새로고침 없이 방이 표시됩니다.
+- 프로필에서 닉네임과 사용자 코드를 확인·수정하고 프로필 사진을 바꿀 수 있습니다. 사용자 코드는 대소문자를 구분하지 않고 3~32자의 영문, 숫자, 밑줄, 하이픈을 허용하며 중복 코드는 거부됩니다.
+- 대화방에서 JPEG/PNG/GIF 이미지와 MP3/WAV/OGG/WebM/M4A 음성 파일을 보낼 수 있습니다. 사진은 최대 20MB, 프로필 사진은 최대 5MB입니다. 파일은 무작위 파일명으로 저장되고 대화방 참여자만 첨부 URL을 열 수 있습니다.
 - 대화 목록과 이전 메시지는 MySQL에 저장됩니다. 앱 재시작이나 blue/green 교체 후에도 남습니다.
 - REST 기록 조회와 WebSocket 구독·전송에서 매번 대화방 참여자 여부를 검사합니다. 방 ID를 알아도 참여자가 아닌 사용자는 기록을 읽거나 메시지를 보낼 수 없습니다.
 - 메시지를 MySQL에 저장한 다음 Redis Pub/Sub으로 blue/green 앱 양쪽에 전달합니다. Redis의 만료되는 접속 기록으로 대화방 접속자 수를 합산합니다.
@@ -15,7 +18,7 @@ Java 21과 Spring Boot 4.1.1로 만든 실시간 1:1 채팅 앱입니다. Spring
 
 대화방 참여 규칙은 **A가 B를 지정해 방을 만들면 A와 B가 참여자가 되는 방식**입니다. 다른 사용자는 방 목록에 나오지 않습니다. 사용자 검색은 해당 사용자가 OAuth로 한 번 이상 로그인한 뒤부터 가능합니다. 이는 서버 저장형 개인 대화이며 종단 간 암호화(E2EE)는 아닙니다.
 
-사용자 검색은 `GET /api/users?q=검색어`이고, 이미 만든 대화방 목록은 `GET /api/conversations`입니다. 검색 결과에는 동명이인을 구분할 수 있도록 사용자 UUID 앞 8자리 코드를 표시하며, 그 코드로도 검색할 수 있습니다. 대화방 생성 요청에는 화면 코드가 아니라 전체 사용자 ID가 전달됩니다.
+사용자 검색은 `GET /api/users?q=검색어`이고, 이미 만든 대화방 목록은 `GET /api/conversations`입니다. 검색은 닉네임 또는 사용자 코드로 하며, 사용자 코드는 프로필에서 직접 정할 수 있습니다. 대화방 생성 요청에는 화면 코드가 아니라 전체 사용자 ID가 전달됩니다.
 
 채팅 화면은 뷰포트 안에 고정되고 대화 목록과 메시지 영역 각각 안에서 스크롤됩니다. Google 계정 선택 요청은 `SecurityConfig`의 `addAccountSelectionPrompt`에서 `prompt=select_account`를 OAuth 인증 요청에 추가합니다.
 
@@ -137,6 +140,11 @@ docker compose --env-file deploy/.env -f deploy/compose.yml exec db mysql -u cha
 Docker 배포본은 개발 서버와 별개로 `localhost:8088`에서 실행할 수 있습니다. 같은 8080 포트를 로컬과 컨테이너가 각각 써도 서로 다른 네트워크 공간이므로 충돌하지 않습니다.
 
 ## 파일 위치
+
+- 업로드 파일은 로컬에서 `app/uploads/`, 배포에서는 `uploads_data` Docker 볼륨(`/data/uploads`)에 저장됩니다. DB 백업과 함께 운영 업로드 볼륨도 백업해야 합니다. blue/green 슬롯이 같은 볼륨을 공유하므로 슬롯 교체 시에도 파일이 유지됩니다.
+- 새 프로필·그룹·첨부 기능을 위한 `V3__profiles_groups_and_attachments.sql`은 기존 사용자 UUID를 기본 사용자 코드로 채우고 파일 메타데이터 컬럼을 추가합니다. Flyway가 다음 앱 시작 때 자동 적용하므로 기존 DB를 수동 초기화하지 마세요.
+- API: 프로필 수정 `PUT /api/me`, 사용자 코드 입력 중복 확인 `GET /api/me/user-code-availability?code=...`, 사진 업로드 `POST /api/me/avatar`, 방 생성 `POST /api/conversations` (`memberIds` 배열), 첨부 업로드 `POST /api/conversations/{id}/attachments`.
+- 사용자 코드 중복으로 프로필 저장이 거부되면 `PUT /api/me`가 HTTP 409와 `{ "message": "이미 사용 중인 사용자 코드입니다. 다른 코드를 입력해 주세요." }`를 반환하고, 화면은 프로필 오류 영역에 문구를 표시합니다. 입력 중 확인 API와 저장 시 검사는 별도 요청이며, 저장 API가 최종 검증을 수행합니다.
 
 - `app/src/main/java/chatting/controller/ChatApiController.java`: REST API 요청과 응답
 - `app/src/main/java/chatting/service/ChatService.java`: 대화방·메시지 규칙과 참여 권한 검사

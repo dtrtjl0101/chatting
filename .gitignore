@@ -7,3 +7,4 @@ build
 # Deployment state and Cloudflare credentials
 deploy/.env
 deploy/state/
+/app/uploads/

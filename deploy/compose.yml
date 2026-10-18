@@ -39,11 +39,13 @@ services:
       SPRING_DATASOURCE_USERNAME: chatting
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
       REDIS_HOST: redis
+      APP_UPLOAD_DIR: /data/uploads
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
     expose: ["8080"]
+    volumes: [uploads_data:/data/uploads]
     restart: unless-stopped
     networks: [chat]
     depends_on:
@@ -61,11 +63,13 @@ services:
       SPRING_DATASOURCE_USERNAME: chatting
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
       REDIS_HOST: redis
+      APP_UPLOAD_DIR: /data/uploads
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
     expose: ["8080"]
+    volumes: [uploads_data:/data/uploads]
     restart: unless-stopped
     networks: [chat]
     depends_on:
@@ -97,3 +101,4 @@ networks:
 
 volumes:
   mysql_data:
+  uploads_data:
