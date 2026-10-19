@@ -13,6 +13,7 @@ public class ConversationRepository {
 
     public ConversationRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
+    /** 사용자가 참여한 방 목록과 화면 표시용 제목·인원·마지막 메시지를 조회한다. */
     public List<Map<String, Object>> findAllForUser(UUID userId) {
         String user = userId.toString();
         return jdbc.queryForList("""
@@ -29,24 +30,29 @@ public class ConversationRepository {
             """, user);
     }
 
+    /** 같은 참여자 조합의 1:1 방이 이미 있는지 확인한다. */
     public boolean existsByDirectKey(String directKey) {
         Integer count = jdbc.queryForObject("SELECT count(*) FROM conversations WHERE direct_key=?", Integer.class, directKey);
         return count != null && count > 0;
     }
 
+    /** ID와 생성 정보를 가진 방을 추가하며, 고유 키가 이미 있으면 중복 삽입을 건너뛴다. */
     public void insertIfAbsent(UUID id, String title, String directKey, String kind, UUID creator) {
         jdbc.update("INSERT IGNORE INTO conversations(id,title,direct_key,kind,created_by) VALUES (?,?,?,?,?)",
                 id.toString(), title, directKey, kind, creator.toString());
     }
 
+    /** 1:1 참여자 조합 키에 해당하는 방 ID를 조회한다. */
     public String findIdByDirectKey(String directKey) {
         return jdbc.queryForObject("SELECT id FROM conversations WHERE direct_key=?", String.class, directKey);
     }
 
+    /** 사용자를 방 참여자로 등록하며 이미 등록되어 있으면 중복 추가하지 않는다. */
     public void addMemberIfAbsent(String conversationId, UUID userId) {
         jdbc.update("INSERT IGNORE INTO conversation_members(conversation_id,user_id) VALUES (?,?)", conversationId, userId.toString());
     }
 
+    /** 사용자가 해당 방의 참여자인지 확인한다. */
     public boolean isMember(UUID conversationId, UUID userId) {
         Integer count = jdbc.queryForObject("SELECT count(*) FROM conversation_members WHERE conversation_id=? AND user_id=?",
                 Integer.class, conversationId.toString(), userId.toString());
@@ -77,10 +83,12 @@ public class ConversationRepository {
                 conversationId.toString());
     }
 
+    /** 사용자 ID로 닉네임을 조회해 기본 방 제목을 만들 때 사용한다. */
     public String findDisplayName(UUID userId) {
         return jdbc.queryForObject("SELECT display_name FROM app_users WHERE id=?", String.class, userId.toString());
     }
 
+    /** 생성 직후 클라이언트에 돌려줄 방 요약 정보와 참여 인원을 조회한다. */
     public Optional<Map<String, Object>> findSummary(String conversationId) {
         return jdbc.query("""
                 SELECT c.id, c.title, c.kind,
@@ -93,6 +101,7 @@ public class ConversationRepository {
                         "memberCount", rs.getInt("memberCount"))) : Optional.empty(), conversationId);
     }
 
+    /** 방 종료 알림을 보낼 대상 등으로 사용할 참여자 ID 목록을 조회한다. */
     public List<UUID> findMemberIds(UUID conversationId) {
         return jdbc.query("SELECT user_id FROM conversation_members WHERE conversation_id=?",
                 (rs, rowNum) -> UUID.fromString(rs.getString("user_id")), conversationId.toString());

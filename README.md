@@ -155,11 +155,11 @@ Docker 배포본은 개발 서버와 별개로 `localhost:8088`에서 실행할 
 - `app/src/main/java/chatting/controller/ChatApiController.java`: REST API 요청과 응답
 - `app/src/main/java/chatting/service/ChatService.java`: 대화방·메시지 규칙과 참여 권한 검사
 - `app/src/main/java/chatting/service/UserService.java`: OAuth 사용자 등록과 계정 연결
-- `app/src/main/java/chatting/repository/UserRepository.java`, `ConversationRepository.java`, `MessageRepository.java`: `JdbcTemplate`으로 MySQL SQL 조회·저장
+- `app/src/main/java/chatting/repository/UserRepository.java`, `ConversationRepository.java`, `MessageRepository.java`: `JdbcTemplate`으로 사용자·대화방·메시지 SQL 조회·저장. 각 메서드에 조회하거나 변경하는 데이터의 설명 주석이 있습니다.
 - `app/src/main/java/chatting/ChatWebSocketHandler.java`: WebSocket 통신과 Redis 실시간 전달; 메시지 규칙은 Service에 위임
 - `app/src/main/java/chatting/SecurityConfig.java`: OAuth 로그인, CSRF와 보안 설정
 
-Controller는 HTTP 요청을 받고 Service를 호출합니다. Service가 대화방 권한, 메시지 검증과 계정 생성 같은 앱 규칙을 처리하며, Repository가 SQL을 실행합니다. 여기서는 JPA 대신 `JdbcTemplate`을 사용하지만 역할은 Repository 계층입니다. WebSocket은 REST Controller를 통하지 않는 연결 방식이라 `ChatWebSocketHandler`가 요청을 직접 받되, 저장과 참여자 검사는 `ChatService`에 위임합니다.
+Controller는 HTTP 요청을 받고 Service를 호출합니다. Service가 대화방 권한, 메시지 검증과 계정 생성 같은 앱 규칙을 처리하며, Repository가 SQL을 실행합니다. `UserRepository`는 사용자와 OAuth 연결, 프로필을, `ConversationRepository`는 방과 참여자 및 방 종료 상태를, `MessageRepository`는 메시지 기록과 첨부 정보 조회·저장을 맡습니다. 각 Repository 메서드 위 주석에서 그 메서드가 다루는 데이터와 목적을 확인할 수 있습니다. 여기서는 JPA 대신 `JdbcTemplate`을 사용하지만 역할은 Repository 계층입니다. WebSocket은 REST Controller를 통하지 않는 연결 방식이라 `ChatWebSocketHandler`가 요청을 직접 받되, 저장과 참여자 검사는 `ChatService`에 위임합니다.
 - `app/src/main/resources/db/migration/`: Flyway MySQL 마이그레이션
 - `deploy/compose.yml`: 배포용 blue/green 앱과 MySQL, Redis, 프로젝트 Nginx
 - `deploy/compose.test.yml`: 로컬 테스트 전용 MySQL·Redis와 별도 볼륨
