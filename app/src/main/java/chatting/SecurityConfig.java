@@ -26,7 +26,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(csrfHandler))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/", "/index.html", "/error", "/actuator/health/**", "/login/**", "/oauth2/**", "/api/csrf", "/api/me").permitAll()
+                .requestMatchers("/", "/index.html", "/manifest.webmanifest", "/service-worker.js", "/icons/**", "/error", "/actuator/health/**", "/login/**", "/oauth2/**", "/api/csrf", "/api/me").permitAll()
                 .anyRequest().authenticated())
             .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> response.sendError(401)))
             .oauth2Login(oauth -> oauth

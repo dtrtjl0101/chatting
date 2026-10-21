@@ -40,6 +40,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
       REDIS_HOST: redis
       APP_UPLOAD_DIR: /data/uploads
+      APP_WEBSOCKET_ALLOWED_ORIGINS: ${APP_WEBSOCKET_ALLOWED_ORIGINS:-http://localhost:*,https://chatting.ljbhomeserver.date}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
@@ -64,6 +65,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
       REDIS_HOST: redis
       APP_UPLOAD_DIR: /data/uploads
+      APP_WEBSOCKET_ALLOWED_ORIGINS: ${APP_WEBSOCKET_ALLOWED_ORIGINS:-http://localhost:*,https://chatting.ljbhomeserver.date}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-local-google-client-id}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
