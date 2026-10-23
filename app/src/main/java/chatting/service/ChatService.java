@@ -41,6 +41,19 @@ public class ChatService {
     /** 사용자가 참여 중인 대화방 요약 목록을 반환한다. */
     public List<Map<String, Object>> listConversations(UUID userId) { return conversations.findAllForUser(userId); }
 
+    /** 방 참여자만 읽음 시각을 갱신하고 참여자 목록을 조회할 수 있다. */
+    public List<Map<String, Object>> getMembers(UUID conversationId, UUID requester) {
+        requireMember(conversationId, requester);
+        return conversations.findMembers(conversationId);
+    }
+
+    /** 방 참여자의 마지막 읽음 시각을 저장한다. */
+    @Transactional
+    public void markRead(UUID conversationId, UUID requester) {
+        requireMember(conversationId, requester);
+        messages.markRead(conversationId, requester);
+    }
+
     /** 참여자를 검증하고 1:1 또는 그룹 대화방과 구성원을 생성한다. */
     @Transactional
     public CreatedConversation createConversation(UUID creator, List<String> requestedMembers, String fallbackOtherId, String requestedTitle) {

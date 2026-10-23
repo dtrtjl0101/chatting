@@ -19,7 +19,11 @@ public class MessageRepository {
                    CASE WHEN m.attachment_path IS NULL THEN '' ELSE CONCAT('/api/conversations/', m.conversation_id, '/attachments/', m.id) END AS attachmentUrl,
                    COALESCE(m.attachment_name, '') AS attachmentName,
                    COALESCE(m.attachment_content_type, '') AS attachmentContentType,
-                   COALESCE(m.attachment_size, 0) AS attachmentSize, m.created_at AS createdAt
+                   COALESCE(m.attachment_size, 0) AS attachmentSize, m.created_at AS createdAt,
+                   (SELECT COUNT(*) FROM conversation_members cm
+                    LEFT JOIN conversation_reads cr ON cr.conversation_id=cm.conversation_id AND cr.user_id=cm.user_id
+                    WHERE cm.conversation_id=m.conversation_id AND cm.user_id<>m.sender_id
+                      AND (cr.last_read_at IS NULL OR cr.last_read_at<m.created_at)) AS unreadCount
             FROM messages m JOIN app_users u ON u.id=m.sender_id
             """;
 
@@ -27,7 +31,7 @@ public class MessageRepository {
 
     public MessageRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
-    /** 방의 최근 메시지 최대 100개를 오래된 순서로 조회해 화면에 표시한다. */
+    /** 방의 최근 메시지 최대 100개를 오래된 순서로 조회해 화면에 표시한다. DB에는 별도 보존 상한이 없다. */
     public List<Map<String, Object>> findLatest(UUID conversationId) {
         return jdbc.queryForList("""
             SELECT m.id, m.sender_id AS senderId, u.display_name AS senderName,
@@ -36,7 +40,11 @@ public class MessageRepository {
                    CASE WHEN m.attachment_path IS NULL THEN '' ELSE CONCAT('/api/conversations/', m.conversation_id, '/attachments/', m.id) END AS attachmentUrl,
                    COALESCE(m.attachment_name, '') AS attachmentName,
                    COALESCE(m.attachment_content_type, '') AS attachmentContentType,
-                   COALESCE(m.attachment_size, 0) AS attachmentSize, m.created_at AS createdAt
+                   COALESCE(m.attachment_size, 0) AS attachmentSize, m.created_at AS createdAt,
+                   (SELECT COUNT(*) FROM conversation_members cm
+                    LEFT JOIN conversation_reads cr ON cr.conversation_id=cm.conversation_id AND cr.user_id=cm.user_id
+                    WHERE cm.conversation_id=m.conversation_id AND cm.user_id<>m.sender_id
+                      AND (cr.last_read_at IS NULL OR cr.last_read_at<m.created_at)) AS unreadCount
             FROM (SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at DESC, id DESC LIMIT 100) m
             JOIN app_users u ON u.id=m.sender_id ORDER BY m.created_at ASC, m.id ASC
             """, conversationId.toString());
@@ -75,4 +83,13 @@ public class MessageRepository {
     }
 
     public record Attachment(String path, String name, String contentType) {}
+
+    /** 현재 시각까지 해당 사용자의 방 읽음 시각을 전진시키며 동시 읽기 요청을 안전하게 병합한다. */
+    public void markRead(UUID conversationId, UUID userId) {
+        jdbc.update("""
+                INSERT INTO conversation_reads(conversation_id,user_id,last_read_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP(6))
+                ON DUPLICATE KEY UPDATE last_read_at=GREATEST(last_read_at, VALUES(last_read_at))
+                """, conversationId.toString(), userId.toString());
+    }
 }

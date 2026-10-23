@@ -53,6 +53,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
         JsonNode input = json.readTree(message.getPayload());
         UUID userId = (UUID) raw.getAttributes().get("userId");
         if (userId == null) { raw.close(CloseStatus.NOT_ACCEPTABLE); return; }
+        if (input.path("type").asText().equals("presencePong")) {
+            raw.getAttributes().put("lastPresencePongAt", System.currentTimeMillis());
+            return;
+        }
         if (input.path("type").asText().equals("join")) {
             UUID roomId;
             try { roomId = UUID.fromString(input.path("conversationId").asText()); }
@@ -66,6 +70,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
                 broadcastCount(previous);//기존 대화방의 참여자 수를 갱신
             }
             rooms.computeIfAbsent(roomId, ignored -> ConcurrentHashMap.newKeySet()).add(session);//rooms에 해당 방이 있으면 기존 세션 집합을 가져와.해당 방이 없다면 새로운 동시성 세트를 만들어 넣어.마지막으로 현재 세션을 그 집합에 추가해.
+            session.getAttributes().put("lastPresencePongAt", System.currentTimeMillis());
             addPresence(roomId, userId.toString(), session.getId());
             send(session, json.createObjectNode().put("type", "joined").put("conversationId", roomId.toString()));
             broadcastCount(roomId);
@@ -132,6 +137,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
                         .forEach(session -> send(session, payload));
                 return;
             }
+            if (event.path("type").asText().equals("readReceipt")) {
+                UUID roomId = UUID.fromString(event.path("conversationId").asText());
+                broadcast(roomId, event);
+                return;
+            }
             UUID room = UUID.fromString(event.path("conversationId").asText());
             // 브라우저가 현재 방의 메시지·접속자 수 이벤트인지 구분할 수 있도록 conversationId를 유지한다.
             broadcast(room, event);
@@ -150,6 +160,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
     public void publishMessage(UUID conversationId, Map<String, Object> savedMessage) {
         var event = json.createObjectNode().put("type", "message").put("conversationId", conversationId.toString());
         event.setAll((tools.jackson.databind.node.ObjectNode) json.valueToTree(savedMessage));
+        redis.convertAndSend("chat:events", json.writeValueAsString(event));
+    }
+
+    /** 참여자가 방을 읽었음을 다른 앱 슬롯의 대화 화면에도 알린다. */
+    public void publishReadReceipt(UUID conversationId, UUID userId) {
+        var event = json.createObjectNode().put("type", "readReceipt")
+                .put("conversationId", conversationId.toString()).put("userId", userId.toString());
         redis.convertAndSend("chat:events", json.writeValueAsString(event));
     }
 
@@ -214,11 +231,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler implements Messag
     /** 접속 기록 만료를 막고 각 연결 방의 인원 수를 주기적으로 갱신한다. */
     @Scheduled(fixedRate = 15_000)
     public void refreshPresence() {
+        long now = System.currentTimeMillis();
         joinedRooms.forEach((sessionId, room) -> {
             WebSocketSession session = activeSessions.get(sessionId);
             if (session != null && session.isOpen()) {
+                Object lastPong = session.getAttributes().get("lastPresencePongAt");
+                if (!(lastPong instanceof Long pongAt) || now - pongAt > 30_000) {
+                    try { session.close(CloseStatus.SESSION_NOT_RELIABLE); } catch (IOException ignored) { }
+                    return;
+                }
                 Object userId = session.getAttributes().get("userId");
                 if (userId != null) addPresence(room, userId.toString(), sessionId);
+                send(session, json.createObjectNode().put("type", "presencePing"));
             }
         });
         joinedRooms.values().stream().distinct().forEach(this::broadcastCount);

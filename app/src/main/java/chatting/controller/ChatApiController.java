@@ -103,6 +103,22 @@ public class ChatApiController {
         return chats.listConversations(UUID.fromString(id));
     }
 
+    /** 대화방 참여자 이름과 프로필 정보를 반환한다. */
+    @GetMapping("/conversations/{conversationId}/members")
+    public List<Map<String, Object>> members(@SessionAttribute("appUserId") String id,
+                                             @PathVariable UUID conversationId) {
+        return chats.getMembers(conversationId, UUID.fromString(id));
+    }
+
+    /** 대화방을 읽음 처리하고 다른 참여자 화면에 읽음 변경을 알린다. */
+    @PostMapping("/conversations/{conversationId}/read")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void markRead(@SessionAttribute("appUserId") String id, @PathVariable UUID conversationId) {
+        UUID userId = UUID.fromString(id);
+        chats.markRead(conversationId, userId);
+        events.publishReadReceipt(conversationId, userId);
+    }
+
     /** 새 1:1 또는 그룹 대화방을 만들고 모든 참여자에게 실시간 생성 이벤트를 발행한다. */
     @PostMapping("/conversations")
     @ResponseStatus(HttpStatus.CREATED)

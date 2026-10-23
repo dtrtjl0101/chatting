@@ -106,4 +106,14 @@ public class ConversationRepository {
         return jdbc.query("SELECT user_id FROM conversation_members WHERE conversation_id=?",
                 (rs, rowNum) -> UUID.fromString(rs.getString("user_id")), conversationId.toString());
     }
+
+    /** 대화방 참여자의 ID와 프로필 표시 정보를 이름순으로 반환한다. */
+    public List<Map<String, Object>> findMembers(UUID conversationId) {
+        return jdbc.queryForList("""
+                SELECT u.id, u.display_name AS displayName, u.user_code AS userCode,
+                       CASE WHEN u.profile_image_path IS NULL THEN '' ELSE CONCAT('/api/users/', u.id, '/avatar') END AS avatarUrl
+                FROM conversation_members cm JOIN app_users u ON u.id=cm.user_id
+                WHERE cm.conversation_id=? ORDER BY u.display_name
+                """, conversationId.toString());
+    }
 }
