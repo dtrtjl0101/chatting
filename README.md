@@ -1,6 +1,6 @@
 # 모여톡
 
-취업 포트폴리오 관점의 아키텍처·설계 결정·SQL 성능 개선 설명은 [PORTFOLIO.md](PORTFOLIO.md)를 참고하세요.
+취업 포트폴리오 관점의 아키텍처 설명은 [PORTFOLIO.md](PORTFOLIO.md), JdbcTemplate과 JPA 선택 근거는 [report.md](report.md)를 참고하세요.
 
 Java 21과 Spring Boot 4.1.1로 만든 실시간 채팅 앱입니다. Spring Security OAuth 로그인, MySQL 대화·메시지 저장, WebSocket 실시간 전송을 사용합니다.
 
