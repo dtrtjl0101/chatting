@@ -2,8 +2,6 @@
 
 Spring Boot와 WebSocket으로 구현한 서버 저장형 채팅 애플리케이션입니다. OAuth 로그인부터 참여자별 대화 권한, 메시지·첨부 저장, Redis를 통한 blue/green 슬롯 간 실시간 전달, Docker 무중단 배포까지 한 프로젝트에서 다룹니다.
 
-> 이 문서는 취업 포트폴리오용 프로젝트 소개입니다. 로컬 실행 및 기존 운영 절차는 [README.md](README.md)를 참고하세요.
-
 ## 데모
 
 - 운영 사이트: https://chatting.ljbhomeserver.date
@@ -67,9 +65,7 @@ MySQL을 메시지의 영구 원본으로 사용하고 Redis는 앱 슬롯 간 �
 - `ChatWebSocketHandler`: WebSocket 이벤트와 Redis 이벤트를 연결하며 메시지 검증·저장은 Service에 위임합니다.
 - `FileStorageService`: 업로드 크기, MIME 형식, 파일 시그니처, 저장 경로를 확인합니다.
 
-### 아키텍처를 설명하는 방법
-
-아키텍처는 기술 이름을 나열하기보다 **요구사항 → 설계 → 감수한 대가 → 검증 방법** 순서로 설명합니다.
+### 아키텍처
 
 | 요구사항 | 설계 선택 | 이유와 비용 |
 | --- | --- | --- |
@@ -82,15 +78,12 @@ MySQL을 메시지의 영구 원본으로 사용하고 Redis는 앱 슬롯 간 �
 
 요청 흐름은 `Browser → Controller/WebSocket Handler → Service → Repository → MySQL`이고, 실시간 이벤트는 `저장 성공 → Redis Pub/Sub → 각 슬롯의 WebSocket 세션`입니다. Nginx는 활성 슬롯으로 HTTP와 WebSocket을 전달하며, 앱 슬롯끼리 직접 세션을 공유하지 않습니다.
 
-## SQL 조회 성능 개선
+## SQL 조회 성능 개선(진행중)
 
 대화 목록은 각 방의 마지막 메시지 내용과 마지막 메시지 시각이 필요합니다. 기존 SQL은 이 값을 각각 상관 서브쿼리로 조회해 방별로 메시지 인덱스를 반복 탐색할 수 있었습니다. 이를 MySQL 8.4 `LEFT JOIN LATERAL`의 최신 메시지 한 행 조회로 합쳤고, 정렬 기준을 `created_at DESC, id DESC`로 명시해 같은 시각의 메시지도 순서를 결정할 수 있게 했습니다.
 
 메시지는 저장 시 상한을 두지 않으며, 처음 방을 열 때 최근 100개만 가져옵니다. 이 제한은 초기 화면 조회량을 정하는 것이며 DB의 보존 개수 제한은 아닙니다. 읽음 상태는 방별 사용자 마지막 읽음 시각으로 저장하며, 메시지별 미읽음 참여자 수를 조회해 보낸 메시지 옆에 표시합니다.
 
-V5는 메시지 최신순 조회용 `(conversation_id, created_at DESC, id DESC)` 복합 인덱스를 `messages_by_conversation_latest`로 추가합니다. 기존 `messages_by_conversation` 인덱스는 `conversation_id` 외래 키에 필요해 유지합니다. 두 인덱스는 저장 공간과 쓰기 비용을 추가하므로 실제 실행 계획과 조회 패턴을 비교해 필요성을 검증해야 합니다. 측정 자료 없이 성능 향상 폭을 주장하지 않습니다.
-
-**성능이 몇 배 빨라졌다고 측정한 것은 아닙니다.** 실제 성능은 데이터 양, 사용자 방 개수, MySQL 통계와 하드웨어에 따라 달라집니다. 재현 가능한 비교는 같은 데이터 스냅샷에서 다음을 각각 실행해 `EXPLAIN ANALYZE`의 실제 행 수와 실행 시간을 기록하는 방식으로 합니다.
 
 ```sql
 EXPLAIN ANALYZE
@@ -108,7 +101,6 @@ WHERE cm.user_id = '실제 사용자 UUID'
 ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC;
 ```
 
-이 결과를 포트폴리오에 추가할 때는 데이터 행 수, MySQL 버전, 인덱스 전후 실행 계획, 반복 측정값을 함께 기록하고, 측정 전에는 개선 폭을 주장하지 않습니다.
 
 ### 배포
 
@@ -126,13 +118,11 @@ ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC;
 
 ## 테스트 및 재현
 
-로컬 개발 환경과 테스트 DB 준비 방법은 [README.md의 로컬 개발 절차](README.md#로컬-개발)를 따릅니다. 자동 테스트 실행:
+자동 테스트 실행:
 
 ```bash
 ./gradlew :app:test
 ```
-
-현재 자동 테스트는 서비스 계층의 비참여자·종료된 방·빈 메시지 차단과 파일 저장 형식·경로 검증을 포함합니다. 실제 OAuth 제공자, 브라우저/WebSocket 재연결, Docker blue/green 전환은 별도 통합·운영 환경 확인이 필요합니다.
 
 ## 설정
 
@@ -141,8 +131,6 @@ WebSocket Origin을 추가할 때 쉼표로 구분해 `.env`에 설정합니다.
 ```dotenv
 APP_WEBSOCKET_ALLOWED_ORIGINS=http://localhost:*,https://chatting.ljbhomeserver.date,https://staging.example.com
 ```
-
-배포 컨테이너가 환경변경을 읽도록 다시 생성/배포해야 합니다. 임의 외부 Origin을 와일드카드로 추가하지 마세요.
 
 ## 알려진 제한과 다음 단계
 
@@ -153,27 +141,31 @@ APP_WEBSOCKET_ALLOWED_ORIGINS=http://localhost:*,https://chatting.ljbhomeserver.
 - 운영 DB와 업로드 볼륨은 별도 백업·복구 훈련이 필요합니다.
 - Grafana/Prometheus 메트릭 수집, 경보, 부하 테스트는 다음 운영성 개선 항목입니다.
 
-## 포트폴리오에서 설명할 수 있는 주제
 
-1. 왜 메시지는 MySQL에 먼저 저장하고 Redis Pub/Sub으로 전달하는가?
--MySQL은 대화 기록의 영구 저장소이고, Redis Pub/Sub은 실행 중인 앱 서버 사이에서 실시간 이벤트를 전달하는 통로이기 때문입니다.
+
+1. 왜 메시지는 MySQL에 먼저 저장하고 Redis Pub/Sub으로 전달하나요?
+ MySQL은 대화 기록의 영구 저장소이고, Redis Pub/Sub은 실행 중인 앱 서버 사이에서 실시간 이벤트를 전달하는 통로이기 때문입니다.
 메시지를 먼저 MySQL에 저장하면 앱이 재시작되거나 사용자가 나중에 접속해도 기록을 조회할 수 있습니다. 저장에 성공한 뒤 Redis에 발행하면 blue와 green 양쪽 서버가 각자 연결된 브라우저에 메시지를 전달할 수 있습니다.
-Redis Pub/Sub은 이벤트를 보관하지 않기 때문에, 받는 서버가 잠시 끊겨 있으면 이벤트를 놓칠 수 있습니다. 그래서 Redis를 기록의 원본으로 사용하지 않고, DB 저장 + 다시 조회할 수 있는 구조로 둡니다.
-2. blue/green 슬롯이 동시에 실행될 때 WebSocket 이벤트와 로그인 세션을 어떻게 공유하는가?
--각 슬롯은 자기 프로세스에 연결된 WebSocket 브라우저 연결을 관리합니다. 슬롯 사이의 전달은 Redis Pub/Sub이 맡습니다.
+ Redis Pub/Sub은 이벤트를 보관하지 않기 때문에, 받는 서버가 잠시 끊겨 있으면 이벤트를 놓칠 수 있습니다. 그래서 Redis를 기록의 원본으로 사용하지 않고, DB 저장 + 다시 조회할 수 있는 구조로 둡니다.
+
+2. blue/green 슬롯이 동시에 실행될 때 WebSocket 이벤트와 로그인 세션을 어떻게 공유하나요?
+ 각 슬롯은 자기 프로세스에 연결된 WebSocket 브라우저 연결을 관리합니다. 슬롯 사이의 전달은 Redis Pub/Sub이 맡습니다.
 예를 들어 A가 blue에, B가 green에 연결돼 있으면 A가 보낸 메시지를 blue가 MySQL에 저장하고 Redis에 발행합니다. 두 슬롯은 Redis 이벤트를 구독하므로 green도 이벤트를 받고, B의 WebSocket 연결로 전달합니다.
-로그인 세션은 Spring Session JDBC와 MySQL에 저장하므로, 브라우저가 blue에서 green으로 요청을 보내도 두 슬롯이 같은 세션 정보를 읽을 수 있습니다. 즉, WebSocket 연결 자체를 서버끼리 공유하는 것이 아니라, 각자 연결을 유지하면서 Redis로 이벤트를 전달합니다.-
-3. 방 ID를 아는 것만으로 대화 내용을 조회할 수 없게 권한 검사를 어디에서 하는가?
--주요 검사는 ChatService에서 합니다.
-- REST 기록 조회는 getMessages()가 requireMember()를 호출합니다.
-- WebSocket 방 입장과 메시지 전송도 ChatWebSocketHandler가 requireMember()를 호출합니다.
-- 첨부 파일 조회도 getAttachment()에서 참여자 여부를 확인합니다.
-참여자가 아니면 403 Forbidden으로 거부합니다. 방 ID는 식별자일 뿐 접근 권한을 주지 않습니다.-
-4. Redis 이벤트를 놓쳤을 때 저장 기록을 통해 어떻게 복구하는가?
--메시지를 DB에 먼저 저장하기 때문에 브라우저가 이벤트를 놓쳐도 다시 기록을 조회할 수 있습니다. 현재 화면은 주기적으로 마지막 메시지 시각 이후의 기록을 조회하고, 방을 열 때 최근 메시지를 불러옵니다. 조회 결과는 메시지 ID로 중복 표시를 막습니다.
-여기서 “복구”는 저장된 메시지를 다시 조회해 화면을 동기화하는 것입니다. Redis Pub/Sub은 누락 이벤트를 재생해 주지 않습니다. 전달 자체의 보장이 더 필요하면 Redis Streams 같은 저장형 메시징 방식을 검토해야 합니다.-
+로그인 세션은 Spring Session JDBC와 MySQL에 저장하므로, 브라우저가 blue에서 green으로 요청을 보내도 두 슬롯이 같은 세션 정보를 읽을 수 있습니다. 즉, WebSocket 연결 자체를 서버끼리 공유하는 것이 아니라, 각자 연결을 유지하면서 Redis로 이벤트를 전달합니다.
+
+3. 방 ID를 아는 것만으로 대화 내용을 조회할 수 없게 권한 검사를 어디에서 하나요?
+ 주요 검사는 ChatService에서 합니다.
+ REST 기록 조회는 getMessages()가 requireMember()를 호출합니다.
+ WebSocket 방 입장과 메시지 전송도 ChatWebSocketHandler가 requireMember()를 호출합니다.
+ 첨부 파일 조회도 getAttachment()에서 참여자 여부를 확인합니다.
+참여자가 아니면 403 Forbidden으로 거부합니다. 방 ID는 식별자일 뿐 접근 권한을 주지 않습니다.
+
+4. Redis 이벤트를 놓쳤을 때 저장 기록을 통해 어떻게 복구하나요?
+ 메시지를 DB에 먼저 저장하기 때문에 브라우저가 이벤트를 놓쳐도 다시 기록을 조회할 수 있습니다. 현재 화면은 주기적으로 마지막 메시지 시각 이후의 기록을 조회하고, 방을 열 때 최근 메시지를 불러옵니다. 조회 결과는 메시지 ID로 중복 표시를 막습니다.
+여기서 “복구”는 저장된 메시지를 다시 조회해 화면을 동기화하는 것입니다. Redis Pub/Sub은 누락 이벤트를 재생해 주지 않습니다. 전달 자체의 보장이 더 필요하면 Redis Streams 같은 저장형 메시징 방식을 검토해야 합니다.
+ 
 5. 무중단 배포에서 health check 실패 시 트래픽 전환을 어떻게 막는가?
--배포 스크립트는 새 슬롯을 실행한 뒤 health check가 통과할 때까지 기다립니다. 제한 시간 안에 통과하지 못하면 오류를 내고 종료하며, 그 뒤에 실행되는 Nginx upstream 변경과 reload는 진행하지 않습니다. 따라서 기존 활성 슬롯으로 트래픽이 계속 전달됩니다.-
+ 배포 스크립트는 새 슬롯을 실행한 뒤 health check가 통과할 때까지 기다립니다. 제한 시간 안에 통과하지 못하면 오류를 내고 종료하며, 그 뒤에 실행되는 Nginx upstream 변경과 reload는 진행하지 않습니다. 따라서 기존 활성 슬롯으로 트래픽이 계속 전달됩니다.
 
 ## 저장소 링크
 
