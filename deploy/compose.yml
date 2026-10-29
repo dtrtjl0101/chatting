@@ -45,6 +45,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
     expose: ["8080"]
     volumes: [uploads_data:/data/uploads]
     restart: unless-stopped
@@ -70,6 +72,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-local-google-client-secret}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-local-kakao-client-id}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-local-kakao-client-secret}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
     expose: ["8080"]
     volumes: [uploads_data:/data/uploads]
     restart: unless-stopped

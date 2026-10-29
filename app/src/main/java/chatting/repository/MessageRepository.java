@@ -2,6 +2,8 @@ package chatting.repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,6 +83,24 @@ public class MessageRepository {
                 rs -> rs.next() ? Optional.of(new Attachment(rs.getString("attachment_path"), rs.getString("attachment_name"), rs.getString("attachment_content_type"))) : Optional.empty(),
                 conversationId.toString(), messageId.toString());
     }
+
+    /** AI 요약·질문에 사용할 방의 일반 텍스트만 최근순으로 제한 조회한다. */
+    public List<AssistantMessage> findRecentTextForAssistant(UUID conversationId, int limit) {
+        return jdbc.query("""
+                SELECT m.id, u.display_name AS sender_name, m.body, m.created_at
+                FROM messages m JOIN app_users u ON u.id=m.sender_id
+                WHERE m.conversation_id=? AND m.message_type='TEXT'
+                ORDER BY m.created_at DESC, m.id DESC LIMIT ?
+                """, (rs, rowNum) -> mapAssistantMessage(rs), conversationId.toString(), limit);
+    }
+
+    private AssistantMessage mapAssistantMessage(ResultSet rs) throws SQLException {
+        return new AssistantMessage(UUID.fromString(rs.getString("id")), rs.getString("sender_name"),
+                rs.getString("body"), rs.getTimestamp("created_at").toInstant());
+    }
+
+    /** AI에 제공할 텍스트 메시지의 최소 필드만 담는다. */
+    public record AssistantMessage(UUID id, String senderName, String text, Instant createdAt) {}
 
     public record Attachment(String path, String name, String contentType) {}
 

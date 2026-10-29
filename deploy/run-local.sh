@@ -30,7 +30,7 @@ export REDIS_HOST=127.0.0.1
 export REDIS_PORT=6380
 export SERVER_PORT="${SERVER_PORT:-8080}"
 
-for key in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET KAKAO_CLIENT_ID KAKAO_CLIENT_SECRET; do
+for key in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET KAKAO_CLIENT_ID KAKAO_CLIENT_SECRET OPENAI_API_KEY OPENAI_MODEL; do
   value="$(read_env "$key" || true)"
   if [[ -n "$value" ]]; then export "$key=$value"; fi
 done
